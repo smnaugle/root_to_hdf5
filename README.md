@@ -11,3 +11,6 @@ python root_to_hdf5.py infiles outfolder
 Will convert all root files in `infiles` to HDF5 files. More options can be seen with the `-h` flag.
 
 HDF5 files are named the same as the input root files, but with ".root" replaced with ".hdf5".
+
+The root files being converted must be `ntuples`, meaning that all branches under the specified tree are one dimension
+vectors of basic types.
