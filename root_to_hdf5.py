@@ -1,5 +1,6 @@
 import argparse
 import logging
+import sys
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -31,25 +32,32 @@ def check_infiles(infiles: str) -> None:
             raise RuntimeError(f"{path} is not a root file.")
 
 
-def setup_outfile(outfilename: str, intree: HasBranches, branches: list[str], options: ProcessOptions) -> h5py.File:
+def setup_outfile(
+    outfilename: str,
+    file: HasBranches,
+    trees: list[str],
+    branches: dict[str, list[str]],
+    options: ProcessOptions,
+) -> h5py.File:
     if Path(outfilename).exists():
         raise FileExistsError(f"File {outfilename} already exists. Please delete.")
     outfile = h5py.File(outfilename, "w")
-    for array in up.iterate(intree, branches, library="numpy"):
-        for a in array:
-            outfile.create_dataset(
-                "/" + a,
-                shape=(0,),
-                maxshape=(None,),
-                dtype=array[a].dtype,
-                compression=options["compression"],
-                compression_opts=options["compression_level"],
-            )
-        break
+    for tree in trees:
+        for array in up.iterate(file[tree], branches[tree], library="numpy"):
+            for a in array:
+                outfile.create_dataset(
+                    tree + "/" + a,
+                    shape=(0,),
+                    maxshape=(None,),
+                    dtype=array[a].dtype,
+                    compression=options["compression"],
+                    compression_opts=options["compression_level"],
+                )
+            break
     return outfile
 
 
-def process_chunk(array: dict[str, np.ndarray], outfile: h5py.File, options: ProcessOptions):
+def process_chunk(array: dict[str, np.ndarray], outfile: h5py.File, tree: str, options: ProcessOptions):
     # Currently unused, but might be useful later
     _ = options
 
@@ -59,33 +67,42 @@ def process_chunk(array: dict[str, np.ndarray], outfile: h5py.File, options: Pro
         dset[dset.shape[0] - data_len :] = data
 
     for branch in array:
-        dset = cast(h5py.Dataset, outfile[branch])
+        dset = cast(h5py.Dataset, outfile[tree + "/" + branch])
         write(dset, array[branch])
 
 
-def process_file(infile: str, outdir: str, branches: list[str], tree: str, options: ProcessOptions):
-    file = up.open(infile + ":" + tree)
+def process_file(infile: str, outdir: str, branches: dict[str, list[str]], trees: list[str], options: ProcessOptions):
+    file = up.open(infile)
     inpath = Path(infile).resolve().stem
     outfilename = str(Path(outdir).resolve()) + "/" + inpath + ".hdf5"
-    if not issubclass(type(file), HasBranches):
+
+    if not issubclass(type(file), HasBranches | up.ReadOnlyDirectory):
         raise TypeError("Expected up.open to return TTree, did you provide the right tree name?")
     file = cast(HasBranches, file)
+
+    # If no trees are supplied, assume all branches are under root file directory
+    if len(trees) == 0:
+        trees.append("/")
+
     if len(branches) == 0:
-        branches = []
-        for branch in file.branches:
-            name = branch.member("fName")
-            branches.append(name)
-    outfile = setup_outfile(outfilename, file, branches, options)
-    for array in up.iterate(file, branches, library="numpy"):
-        array = cast(dict[str, np.ndarray], array)
-        process_chunk(array, outfile, options)
+        branches = {}
+        for tree in trees:
+            branches[tree] = []
+            for branch in file[tree].branches:
+                name = branch.member("fName")
+                branches[tree].append(name)
+    outfile = setup_outfile(outfilename, file, trees, branches, options)
+    for tree in trees:
+        for array in up.iterate(file[tree], branches[tree], library="numpy"):
+            array = cast(dict[str, np.ndarray], array)
+            process_chunk(array, outfile, tree, options)
 
 
 def main():
     desc = """
 Will convert all root files in `infiles` to HDF5 files.
 
-Example: `python root_to_hdf5.py rootfiles/*.root outdir/`
+Example: `python root_to_hdf5.py rootfiles/*.root outdir/ -t output`
 
 HDF5 files are named the same as the input root files, but with ".root" replaced with ".hdf5".
 
@@ -98,18 +115,22 @@ Requires uproot, h5py, and numpy.
         help="Root file(s) to convert",
     )
     args.add_argument("outfolder", type=str, help="Folder in which to output files")
-    args.add_argument(
-        "-b",
-        "--branches",
-        action="append",
-        default=[],
-        help="Branches to include in outfiles. Leave unset to include all branches.",
-    )
+
+    # TODO: Fix specifying both trees and branches
+
+    # args.add_argument(
+    #     "-b",
+    #     "--branches",
+    #     action="append",
+    #     default=[],
+    #     help="Branches to include in outfiles. Leave unset to include all branches.",
+    # )
     args.add_argument(
         "-t",
-        "--tree",
-        default="",
-        help="Tree in root file to find the branches.",
+        "--trees",
+        action="append",
+        default=[],
+        help="Tree(s) in root file to find the branches.",
     )
     args.add_argument(
         "-l",
@@ -145,14 +166,24 @@ Requires uproot, h5py, and numpy.
             process_file(
                 infile,
                 parsed.outfolder,
-                parsed.branches,
-                parsed.tree,
+                {},
+                parsed.trees,
                 {
                     "compression": parsed.compression,
                     "compression_level": parsed.level,
                 },
             )
         except OSError as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+
+            def print_traceback(tb):
+                logger.warning("Exception " + str(tb.tb_frame))
+                logger.warning("On line no. " + str(tb.tb_lineno))
+                if tb.tb_next is not None:
+                    print_traceback(tb.tb_next)
+
+            if exc_tb is not None and exc_type is not None:
+                print_traceback(exc_tb)
             logger.warning(f"Could not process {infile}.")
             logger.warning(f"Recieved: {type(e)}, {e}")
             logger.warning(f"Skipping {infile}.")
