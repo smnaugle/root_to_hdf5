@@ -31,9 +31,7 @@ def check_infiles(infiles: str) -> None:
             raise RuntimeError(f"{path} is not a root file.")
 
 
-def setup_outfile(
-    outfilename: str, intree: HasBranches, branches: list[str], options: ProcessOptions
-) -> h5py.File:
+def setup_outfile(outfilename: str, intree: HasBranches, branches: list[str], options: ProcessOptions) -> h5py.File:
     if Path(outfilename).exists():
         raise FileExistsError(f"File {outfilename} already exists. Please delete.")
     outfile = h5py.File(outfilename, "w")
@@ -51,9 +49,7 @@ def setup_outfile(
     return outfile
 
 
-def process_chunk(
-    array: dict[str, np.ndarray], outfile: h5py.File, options: ProcessOptions
-):
+def process_chunk(array: dict[str, np.ndarray], outfile: h5py.File, options: ProcessOptions):
     # Currently unused, but might be useful later
     _ = options
 
@@ -67,16 +63,12 @@ def process_chunk(
         write(dset, array[branch])
 
 
-def process_file(
-    infile: str, outdir: str, branches: list[str], tree: str, options: ProcessOptions
-):
+def process_file(infile: str, outdir: str, branches: list[str], tree: str, options: ProcessOptions):
     file = up.open(infile + ":" + tree)
     inpath = Path(infile).resolve().stem
     outfilename = str(Path(outdir).resolve()) + "/" + inpath + ".hdf5"
     if not issubclass(type(file), HasBranches):
-        raise TypeError(
-            "Expected up.open to return TTree, did you provide the right tree name?"
-        )
+        raise TypeError("Expected up.open to return TTree, did you provide the right tree name?")
     file = cast(HasBranches, file)
     if len(branches) == 0:
         branches = []
@@ -90,7 +82,16 @@ def process_file(
 
 
 def main():
-    args = argparse.ArgumentParser()
+    desc = """
+Will convert all root files in `infiles` to HDF5 files.
+
+Example: `python root_to_hdf5.py rootfiles/*.root outdir/`
+
+HDF5 files are named the same as the input root files, but with ".root" replaced with ".hdf5".
+
+Requires uproot, h5py, and numpy.
+    """
+    args = argparse.ArgumentParser(description=desc, formatter_class=argparse.RawDescriptionHelpFormatter)
     args.add_argument(
         "infiles",
         nargs="+",
