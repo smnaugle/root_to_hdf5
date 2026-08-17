@@ -45,14 +45,18 @@ def setup_outfile(
     for tree in trees:
         for array in up.iterate(file[tree], branches[tree], library="numpy"):
             for a in array:
-                outfile.create_dataset(
-                    tree + "/" + a,
-                    shape=(0,),
-                    maxshape=(None,),
-                    dtype=array[a].dtype,
-                    compression=options["compression"],
-                    compression_opts=options["compression_level"],
-                )
+                try:
+                    outfile.create_dataset(
+                        tree + "/" + a,
+                        shape=(0,),
+                        maxshape=(None,),
+                        dtype=array[a].dtype,
+                        compression=options["compression"],
+                        compression_opts=options["compression_level"],
+                    )
+                except TypeError:
+                    branches[tree].pop(branches[tree].index(a))
+                    continue
             break
     return outfile
 
@@ -90,6 +94,9 @@ def process_file(infile: str, outdir: str, branches: dict[str, list[str]], trees
             branches[tree] = []
             for branch in file[tree].branches:
                 name = branch.member("fName")
+                if "/" in name:
+                    logger.warning(f"Cannot convert branch {name} since hdf5 does not allow / in names.")
+                    continue
                 branches[tree].append(name)
     outfile = setup_outfile(outfilename, file, trees, branches, options)
     for tree in trees:
@@ -174,6 +181,9 @@ Requires uproot, h5py, and numpy.
                 },
             )
         except OSError as e:
+            if type(e) is FileExistsError:
+                logger.warning(e)
+                continue
             exc_type, exc_obj, exc_tb = sys.exc_info()
 
             def print_traceback(tb):
